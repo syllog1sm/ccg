@@ -300,66 +300,66 @@ class TestReplace(unittest.TestCase):
         self.assertEqual(production.left, 'NP/(N/PP)')
         self.assertEqual(production.right, '(N/PP)/PP')
 
-    #def test_all_round_trips(self):
-    #    """
-    #    Test a round-trip replacement for every production rule
-    #    """
-    #    random.seed(0)
-    #    grammar_loc = os.path.join(os.path.split(__file__)[0],
-    #                               'wsjfull.grammar')
-    #    cats = ccg.lexicon.CATS.values()
-    #    for parent, left, right, freq in ccg.grammar.read(grammar_loc):
-    #        if right is None:
-    #            continue
-    #        if left not in ccg.lexicon.CATS or \
-    #           right not in ccg.lexicon.CATS:
-    #            continue
-    #        # Ignore these productions, where I prefer my answer:
-    #        # 5: (PP/NP)/(PP/NP) PP/NP --> PP/NP RTed to PP/PP PP/NP --> PP/NP
-    #        if parent == 'PP/NP' and left == '(PP/NP)/(PP/NP)' \
-    #           and right == 'PP/NP':
-    #            continue
-    #        # 4: ((S[adj]\NP)/PP)/((S[adj]\NP)/PP) (S[adj]\NP)/PP 
-    #        # --> (S[adj]\NP)/PP RTed to (S[adj]\NP)/(S[adj]\NP) on left
-    #        if left == '((S[adj]\NP)/PP)/((S[adj]\NP)/PP)' \
-    #           and right == '(S[adj]\NP)/PP' and parent == '(S[adj]\NP)/PP':
-    #            continue
-    #        # 2: ((S[dcl]\NP)/(S[adj]\NP))/NP (S\NP)\(((S\NP)/(S[adj]\NP))/NP)
-    #        # --> S[dcl]\NP
-    #        # Broken category
-    #        if right == '(S\NP)\(((S\NP)/(S[adj]\NP))/NP)':
-    #            continue
-    #        #print "%d: %s %s --> %s" % (freq, left, right, parent)
-    #        c1 = ccg.scat.SuperCat(left)
-    #        c1_annot = c1.annotated
-    #        c1_str = c1.string
-    #        c2 = ccg.scat.SuperCat(right)
-    #        c2_annot = c2.annotated
-    #        c2_str = c2.string
-    #        parent = ccg.scat.SuperCat(parent)
-    #        production = ccg.rules.Production(c1, c2, parent=parent)
-    #        if production.left.is_type_raise \
-    #           and production.right.is_type_raise:
-    #            continue
-    #        rule = production.rule
-    #        replace_with = random.choice(cats)
-    #        replacement = ccg.scat.SuperCat(replace_with)
-    #        if parent.conj:
-    #            replacement = ccg.scat.change_kwarg(replacement, conj=True)
-    #        production.replace(replacement)
-    #        # Don't expect RT if replacement forces rule change
-    #        if production.rule != rule:
-    #            continue
-    #        #print 'New left: %s' % production.left.string
-    #        #print 'New right: %s' % production.right.string
-    #        production.replace(parent)
-    #        # Accept (S\NP)|(S\NP) for S|S
-    #        if production.left.string == '(S\NP)/(S\NP)' and c1_str == 'S/S':
-    #            continue
-    #        elif production.right.string == '(S\NP)\(S\NP)' and c2_str == 'S\S':
-    #            continue
-    #        self.assertEqual(production.left.string, c1_str)
-    #        self.assertEqual(production.right.string, c2_str)
+    def test_all_round_trips(self):
+        """
+        Test a round-trip replacement for every production rule
+        """
+        random.seed(0)
+        grammar_loc = os.path.join(os.path.split(__file__)[0],
+                                   'wsjfull.grammar')
+        cats = ccg.lexicon.CATS.values()
+        for parent, left, right, freq in ccg.grammar.read(grammar_loc):
+            if right is None:
+                continue
+            if left not in ccg.lexicon.CATS or \
+               right not in ccg.lexicon.CATS:
+                continue
+            # Ignore these productions, where I prefer my answer:
+            # 5: (PP/NP)/(PP/NP) PP/NP --> PP/NP RTed to PP/PP PP/NP --> PP/NP
+            if parent == 'PP/NP' and left == '(PP/NP)/(PP/NP)' \
+               and right == 'PP/NP':
+                continue
+            # 4: ((S[adj]\NP)/PP)/((S[adj]\NP)/PP) (S[adj]\NP)/PP 
+            # --> (S[adj]\NP)/PP RTed to (S[adj]\NP)/(S[adj]\NP) on left
+            if left == '((S[adj]\NP)/PP)/((S[adj]\NP)/PP)' \
+               and right == '(S[adj]\NP)/PP' and parent == '(S[adj]\NP)/PP':
+                continue
+            # 2: ((S[dcl]\NP)/(S[adj]\NP))/NP (S\NP)\(((S\NP)/(S[adj]\NP))/NP)
+            # --> S[dcl]\NP
+            # Broken category
+            if right == '(S\NP)\(((S\NP)/(S[adj]\NP))/NP)':
+                continue
+            #print "%d: %s %s --> %s" % (freq, left, right, parent)
+            c1 = ccg.scat.SuperCat(left)
+            c1_annot = c1.annotated
+            c1_str = c1.string
+            c2 = ccg.scat.SuperCat(right)
+            c2_annot = c2.annotated
+            c2_str = c2.string
+            parent = ccg.scat.SuperCat(parent)
+            production = ccg.rules.Production(c1, c2, parent=parent)
+            if production.left.is_type_raise \
+               and production.right.is_type_raise:
+                continue
+            rule = production.rule
+            replace_with = random.choice(cats)
+            replacement = ccg.scat.SuperCat(replace_with)
+            if parent.conj:
+                replacement = ccg.scat.change_kwarg(replacement, conj=True)
+            production.replace(replacement)
+            # Don't expect RT if replacement forces rule change
+            if production.rule != rule:
+                continue
+            #print 'New left: %s' % production.left.string
+            #print 'New right: %s' % production.right.string
+            production.replace(parent)
+            # Accept (S\NP)|(S\NP) for S|S
+            if production.left.string == '(S\NP)/(S\NP)' and c1_str == 'S/S':
+                continue
+            elif production.right.string == '(S\NP)\(S\NP)' and c2_str == 'S\S':
+                continue
+            self.assertEqual(production.left.string, c1_str)
+            self.assertEqual(production.right.string, c2_str)
 
 
 

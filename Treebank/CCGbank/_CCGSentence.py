@@ -120,22 +120,52 @@ class CCGSentence(Sentence, CCGNode):
                 assert curLab
                 sibLab = sibling.label if sibling else None
                 parLab = parent.label
-                if not sibLab:
-                    production = ccg.rules.Production(curLab, sibLab, parLab)
-                else:
-                    if parent.label.conj:
-                        production = ccg.rules.Production(curLab, sibLab, parLab)
-                    else:
-                        production = ccg.rules.Production(curLab, sibLab)
-                if str(production.result) == str(parent.label):
-                    parent.label = production.result
+                production = ccg.rules.Production(curLab, sibLab, parLab)
+                result = production.result
+                if result and result.exact_eq(parLab):
+                    parent.label = result
                 current = parent
                 assert current.label
+        
         unifyBranch(self.child(0))
         # Now bind the variables to the words
         for word in self.listWords():
-            word.stag.get_var().word = word
-        return None
+            word.stag.add_head(word)
+        # Fix conjunctions
+        # This is truly an evil hack, but it's very difficult to get it right.
+        # We first find conjunction nodes and get their conjuncted variables
+        # plus the set of nodes _outside_ their subtree (note that this
+        # "outside the subtree" part is what makes this so hard to do in
+        # pure unification)
+        # Once we have them, we search the nodes outside for variable sets
+        # that contain one but not all of the conjuncts, and then restore
+        # the missing ones.
+        conjVarSets = []
+        nodeSet = set(self.depthList())
+        for conjNode in nodeSet:
+            if conjNode.length() < 2:
+                continue
+            if not conjNode.child(1).label.conj:
+                continue
+            varSet = set(v.get_ref() for v in conjNode.label.get_vars())
+            nodesBelowConj = set(conjNode.depthList())
+            nodesBelowConj.add(conjNode)
+            nodesToCheck = nodeSet - nodesBelowConj
+            conjVarSets.append((varSet, nodesToCheck))
+        
+        for conjVars, nodes in conjVarSets:
+            for node in nodes:
+                if node.isLeaf() or node.isRoot():
+                    continue
+                scat = node.label
+                for var, varSet in scat._var_table.items():
+                    varSet = set(v.get_ref() for v in varSet)
+                    if not varSet.intersection(conjVars):
+                        continue
+                    words = set(v.word for v in varSet if v.word)
+                    for conjVar in conjVars:
+                        if conjVar.word not in words:
+                            scat.add_var(var, conjVar)
 
     # This returns 4 groups for compatibility with the
     # Root.parseString method
@@ -187,32 +217,24 @@ class CCGSentence(Sentence, CCGNode):
 
     def _makeLeaf(self, nodeData, wordID):
         L, cat, ccgPos, ptbPos, text, annotCat = nodeData.split()
-        if cat == '((S[b]\NP)/NP)/':
-            cat = '(S[b]\NP)/NP'
-            print annotCat
-            if annotCat == '((S[b]\NP_199)/NP_200)/_201':
-                annotCat = '(S[b]\NP_199)/NP_200'
-            elif annotCat == '((S[b]\NP_266)/NP_267)/_268':
-                annotCat = '(S[b]\NP_266)/NP_267'
-        if '@' in annotCat:
-            annotCat, srl_annot_str = annotCat.split('@')
+        if cat.endswith('/'):
+            cat = cat[1:-2]
+        if '@' in cat:
+            cat, srl_annot_str = cat.split('@')
         else:
             srl_annot_str = ''
+        # Check whether the @ is on the annotCat instead
+        if not srl_annot_str and '@' in annotCat:
+            annotCat, srl_annot_str = annotCat.split('@')
+        if cat.endswith('/'):
+            cat = cat[1:-2]
         cat = ccg.scat.SuperCat(cat)
         for srl_triple in srl_annot_str.split('_'):
             if not srl_triple:
                 continue
-            cat.srl_annot.add(tuple(srl_triple.replace('X', '_').split('|')))
+            cat.srl_annot.add(tuple(srl_triple.replace('X', '_').split("'")))
         parent = CCGNode(label=cat, headIdx=0)
         leaf = CCGLeaf(label=ptbPos, pos=ccgPos, text=text,
                        parg=cat, wordID=wordID)
         parent.attachChild(leaf)
         return parent
-        
-                            
-                            
-        
-                    
-                
-
-    

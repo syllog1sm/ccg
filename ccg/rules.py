@@ -31,13 +31,6 @@ class Production(object):
             rule, result, depth = self.get_rule(left, right, parent)
             self.depth = depth
         self.result = result
-        if parent and right:
-            assert parent.exact_eq(result)
-            parent.bind_vars(result, parent.category, result.category)
-            #parent = result # Does this break anything?
-                             # YES! Run the tests you bonehead!!!
-        elif right and result:
-            parent = result
         if not right:
             pass
         elif left.is_adjunct and rule.startswith('f') and self._y and \
@@ -74,6 +67,10 @@ class Production(object):
             if result and ((not parent) or parent.exact_eq(result)):
                 return rule, result, depth
         else:
+            if parent:
+                result, depth = self.binary(left, right, parent)
+                if result and parent.exact_eq(result):
+                    return 'binary', result, 0
             return 'invalid', parent, 0
 
 
@@ -127,6 +124,13 @@ class Production(object):
         return left, right
 
     def _apply_replace(self, func, arg, new):
+        # Special case for determiners where new has grown an argument
+        determiners = ['NP/N', 'NP/(N/PP)', 'PP/NP']
+        if func in determiners and new.is_complex and \
+           new.inner_result == self.parent.inner_result:
+            args = [(a, s, k) for r, a, s, k in new.deconstruct()]
+            new_arg = ccg.scat.add_args(arg, args)
+            return func, new_arg
         if func.result.feat_var: # Preserve feature passing
             new = ccg.scat.change_kwarg(new, feature='',
                                         feat_var=func.result.feat_var)
@@ -146,7 +150,7 @@ class Production(object):
         # Y category must be the same as before, as it's not in the parent
         # Give the argument and result the Ys they each had originally
         res_y = func.argument
-        for arg_y, slash, z, hat in arg.deconstruct():
+        for arg_y, slash, z, _ in arg.deconstruct():
             if arg_y == res_y:
                 break
         else:
@@ -157,8 +161,8 @@ class Production(object):
         orig_x = func.result
         # Get the new Z (or Zs in the case of generalised comp)
         dollars = []
-        for res, arg, slash, hat in new.deconstruct():
-            dollars.append((arg, slash, {'hat': hat}))
+        for res, arg, slash, kwargs in new.deconstruct():
+            dollars.append((arg, slash, kwargs))
             if res.is_adjunct:
                 break
             #if res == 'S\NP':
@@ -189,12 +193,9 @@ class Production(object):
         return functor, argument
 
     def _traise_replace(self, child, new):
-        print new
         assert new.is_type_raise
         left = ccg.scat.SuperCat(new.argument.argument)
         new.bind_vars(new, new.argument.argument, left)
-        print 'new from traise', new.annotated
-        print left.annotated
         return left
 
     def _traise_comp_replace(self, func, arg, new):
@@ -210,8 +211,8 @@ class Production(object):
         # Arg == (T\R)/$
         r = func.argument.argument
         dollars = []
-        for t, z, slash, hat in new.deconstruct():
-            dollars.append((z, slash, {'hat': hat}))
+        for t, z, slash, kwargs in new.deconstruct():
+            dollars.append((z, slash, kwargs))
             if t.is_adjunct:
                 break
         else:
@@ -270,21 +271,23 @@ class Production(object):
         return self._composition(right, left, crossing=True)
 
     def add_conj(self, left, right):
+        """
+        Multi-variables for conj is so far a failure. Make conjuncted
+        constituents headed by the conjunction
+        """
         if left != ccg.CONJ or right.conj:
             return False, 0
-        cat = ccg.scat.change_kwarg(right.category, conj=True)
-        scat = ccg.scat.SuperCat(cat)
-        scat.bind_vars(right, scat.category, right.category)
-        conj_var = ccg.scat.ConjVariable()
-        conj_var.unify(left.get_var())
-        left._var_table[0] = conj_var
-        scat.get_var().add(right.get_var())
+        return self._do_add_conj(left, right)
+
+    def _do_add_conj(self, left, right):
+        # This should take care of variable binding too
+        scat = ccg.scat.change_kwarg(right, conj=True)
         return scat, 0
 
     def comma_conj(self, left, right):
         if left != ccg.COMMA and left != ccg.SEMI_COLON and left != ccg.COLON:
             return False, 0
-        return add_conj(ccg.scat.SuperCat(ccg.CONJ), right), 0
+        return self._do_add_conj(left, right)
 
     def do_conj(self, left, right):
         if not right.conj:
@@ -292,18 +295,14 @@ class Production(object):
         if left.conj:
             return False, 0
         new_right = ccg.scat.change_kwarg(right, conj=False)
-        new_right._var_table = right._var_table
-        if new_right.string != left.string:
+        if not new_right.exact_eq(left):
             return False, 0
-        for path, lcat in left.cats.items():
-            if lcat.var == 0:
-                continue
-            rcat = new_right.cats[path]
-            # This fails on coordinations such as "applied for and won"
-            # due to composition headedness. Not sure what to do about it.
-            #assert rcat.var != 0
-            left.bind_vars(new_right, lcat, rcat)
-        left.conjunct_var_to(new_right)
+        for path, right_cat in new_right.cats.items():
+            if right_cat.var > 0:
+                new_right.unify_globals_at_var(left, right_cat.var,
+                                               left.cats[path].var)
+        for var in left.get_vars():
+            new_right.add_var(0, var)
         return new_right, 0
 
     def left_punct(self, left, right):
@@ -335,20 +334,48 @@ class Production(object):
         if key not in TypeChanging.rules:
             return False, 0
         else:
+            result = ccg.scat.SuperCat(parent.category)
             bindings = TypeChanging.rules[key]
             for parent_var, child_var in bindings:
-                parent_global = parent._var_table[parent_var]
-                child_global = child._var_table[child_var]
-                parent_global.unify(child_global)
-            return parent, 0
-
+                try:
+                    result.unify_globals_at_var(child, parent_var, child_var)
+                except KeyError:
+                    raise
+            return result, 0
+    
+    def binary(self, left, right, parent):
+        key = (parent.string, left.string, right.string)
+        if key not in BinaryTypeChanging.rules:
+            return False, 0
+        else:
+            bindings = BinaryTypeChanging.rules[key]
+            result = ccg.scat.SuperCat(parent.category)
+            for parent_var, left_var, right_var in bindings:
+                if left_var is None:
+                    assert right_var is not None
+                    try:
+                        result.unify_globals_at_var(
+                            right, parent_var, right_var)
+                    except KeyError:
+                        raise
+                elif right_var is None:
+                    assert left_var is not None
+                    try:
+                        result.unify_globals_at_var(left, parent_var, left_var)
+                    except KeyError:
+                        raise
+                else:
+                    raise Exception
+            return result, 0
 
     def _application(self, functor, argument):
         if functor.conj or argument.conj:
             return False, 0
         if functor.argument != argument:
             return False, 0
-        functor.bind_vars(argument, functor.argument, argument.category)
+        has_bound = functor.bind_vars(argument, functor.argument, argument.category)
+        if not has_bound:
+            return False, 0
         result = functor.result
         c1_to_c2, c2_to_c1 = self._var_to_feats(functor.argument, argument)
         result, var_map = minimise_vars(result, c1_to_c2)
@@ -385,7 +412,6 @@ class Production(object):
         # For crossing composition, they must be inconsistent.
         if all(s == functor.slash for (arg, s, k) in zs) == crossing:
             return False, 0
-
         functor.bind_vars(arg, x_y, self._y)
         max_var = max(functor.cats_by_var) + 1
         arg_to_final = self._map_vars(x_y, yz.result, max_var, arg.cats_by_var)
@@ -401,8 +427,12 @@ class Production(object):
 
         # Bind the global variables
         scat = ccg.scat.SuperCat(result)
+
+        # Take outer var from arg
+        scat.unify_globals_at_var(arg, 0)
+
         arg_res = arg
-        for result, z, _, hat in scat.deconstruct():
+        for result, z, _, _ in scat.deconstruct():
             scat.bind_vars(arg, z, arg_res.argument)
             if result == functor.result:
                 scat.bind_vars(functor, result, functor.result)
@@ -444,6 +474,7 @@ class Production(object):
         return c1_to_c2, c2_to_c1
 
 class TypeChanging(object):
+    # Note which variables to bind
     rules = {
         ('NP', 'N'): [(0, 0)],
         ('NP\NP', 'S[dcl]\NP'): [(0, 0), (1, 1)],
@@ -458,51 +489,82 @@ class TypeChanging(object):
         ('(S\NP)\(S\NP)', 'S\NP'): [(0, 0), (2, 1)],
         ('(S\NP)\(S\NP)', 'S[ng]\NP'): [(0, 0), (2, 1)],
         ('(S\NP)/(S\NP)', 'S\NP'): [(0, 0), (2, 1)],
-        ('NP\NP', 'S/NP'): [(0, 0), (1, 1)],
+        ('NP\NP', 'S[dcl]/NP'): [(0, 0), (1, 1)],
         ('NP', 'S\NP'): [(0, 0)],
         ('S/S', 'S\NP'): [(0, 0)],
         ('NP\NP', 'S'): [(0, 0)],
         ('S/S', 'S\NP'): [(0, 0)],
-        ('S/S', 'S\NP'): [(0, 0)]}
+        ('S/S', 'S\NP'): [(0, 0)],
+        ('NP/PP', 'N/PP'): [(0, 0), (1, 1)],
+        ('(NP/PP)/PP', '(N/PP)/PP'): [(0, 0), (1, 1), (2, 2)],
+        ('((NP/PP)/PP)/PP', '((N/PP)/PP)/PP'): [(0, 0), (1, 1), (2, 2), (3, 3)]
+        }
 
+class BinaryTypeChanging(object):
+    rules = {
+        # For rebanking
+        ('NP\NP', ',', 'S[pss]\NP'): [(0, None, 0), (1, None, 1)],
+        ('NP\NP', ',', 'S[ng]\NP'): [(0, None, 0), (1, None, 1)],
+        ('NP\NP', ',', 'S[adj]\NP'): [(0, None, 0), (1, None, 1)],
+        ('NP\NP', ',', 'S[dcl]\NP'): [(0, None, 0), (1, None, 1)],
+        ('NP\NP', ',', 'S[dcl]/NP'): [(0, None, 0), (1, None, 1)],
+        ('S/S', 'S[dcl]/S[dcl]', ','): [(0, 0, None), (1, 1, None)],
+        ('(S\NP)\(S\NP)', ',', 'NP'): [(0, None, 0)],
+        ('(S\NP)/(S\NP)', 'S[dcl]/S[dcl]', ','): [(0, 0, None), (1, 1, None)],
+        ('(S\NP)\(S\NP)', 'S[dcl]/S[dcl]', ','): [(0, 0, None), (1, 1, None)],
+        ('S/S', 'NP', ','): [(0, 0, None)],
+        ('S\S', 'S[dcl]/S[dcl]', ','): [(0, 0, None), (1, 1, None)],
+        ('S/S', 'S[dcl]\S[dcl]', ','): [(0, 0, None), (1, 1, None)],
+        ('S[adj]\NP[conj]', 'conj', 'PP'): [(0, None, 0)],
+        ('S[adj]\NP[conj]', 'conj', 'NP'): [(0, None, 0)],
+        ('NP[conj]', 'conj', 'S[adj]\NP'): [(0, None, 0)],
+        ('S/S', 'S[dcl]', ','): [(0, 0, None)],
+        ('(S\NP)/(S\NP)', 'S[dcl]\S[dcl]', ','): [(0, 0, None), (1, 1, None)],
+        ('NP\NP', 'S[dcl]/S[dcl]', ','): [(0, 0, None), (1, 1, None)],
+        ('S[adj]\NP[conj]', 'conj', 'S[ng]\NP'): [(0, None, 0), (1, None, 1)],
+        ('(S\NP)\(S\NP)', 'S[dcl]\S[dcl]', ','): [(0, 0, None), (1, 1, None)],
+        ('S[pss]\NP[conj]', 'conj', 'S[ng]\NP'): [(0, None, 0), (1, None, 1)]
+    }
 
 
 def fapply(left, right):
-    return Production(left, right, rule='fapply').parent
+    return Production(left, right, rule='fapply').result
 
 def bapply(left, right):
-    return Production(left, right, rule='bapply').parent
+    return Production(left, right, rule='bapply').result
 
 def fcomp(left, right):
-    return Production(left, right, rule='fcomp').parent
+    return Production(left, right, rule='fcomp').result
 
 def bcomp(left, right):
-    return Production(left, right, rule='bcomp').parent
+    return Production(left, right, rule='bcomp').result
 
 def fxcomp(left, right):
-    return Production(left, right, rule='fxcomp').parent
+    return Production(left, right, rule='fxcomp').result
 
 def bxcomp(left, right):
-    return Production(left, right, rule='bxcomp').parent
+    return Production(left, right, rule='bxcomp').result
 
 def add_conj(left, right):
-    return Production(left, right, rule='add_conj').parent
+    return Production(left, right, rule='add_conj').result
 
 def do_conj(left, right):
-    return Production(left, right, rule='do_conj').parent
+    return Production(left, right, rule='do_conj').result
 
 def comma_conj(left, right):
-    return Production(left, right, rule='comma_conj').parent
+    return Production(left, right, rule='comma_conj').result
 
 def left_punct(left, right):
-    return Production(left, right, rule='left_punct').parent
+    return Production(left, right, rule='left_punct').result
 
 def right_punct(left, right):
-    return Production(left, right, rule='right_punct').parent
+    return Production(left, right, rule='right_punct').result
 
 def traise(left, parent):
-    return Production(left, None, parent).parent
-    
+    return Production(left, None, parent).result
+
+def binary(left, right, parent):
+    return Production(left, right, parent).result
 
 def minimise_vars(cat, fvars, seen_vars = None, fvar_freqs = None):
     def _kwargs(cat):

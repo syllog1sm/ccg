@@ -3,7 +3,7 @@ from collections import defaultdict
 
 import ccg.lexicon
 
-VARS = ['_', 'Y', 'Z', 'W', 'V', 'U', 'T', 'S', 'R', 'P']
+VARS = ['_', 'Y', 'Z', 'W', 'V', 'U', 'T', 'S', 'R', 'P', 'Q', 'O']
 _FEATS = ['[dcl]', '[b]', '[pss]', '[ng]', '[pt]']
 _ATOMIC_RE = re.compile(r'([a-zA-Z,\.;:]+)(\[[^\]]+\])?(\[conj\])?')
 _AUX_RE = re.compile(r'\(S\[(\w+)\]\\NP\)/\(S\[(\w+)\]\\NP\)')
@@ -139,11 +139,19 @@ class Category(object):
         else:
             self.__dict__[attr] = value
 
+    non_s_feat_re = re.compile(r'(?<!S)\[\w+]+')
     def exact_eq(self, other):
         if self is other:
             return True
+        elif other is None:
+            return False
+        if self.conj != other.conj:
+            return False
         else:
-            return str(self) == str(other)
+            # Succeed if features are different on non-S nodes
+            self_str = self.non_s_feat_re.sub('', self.string)
+            other_str  =self.non_s_feat_re.sub('', other.string)
+            return self_str == other_str
         #elif isinstance(other, str):
         #    return self.string == other
         #elif isinstance(other, Category):
@@ -155,12 +163,12 @@ class Category(object):
 
     def deconstruct(self):
         """
-        Yields result, argument, slash and hat for
+        Yields result, argument, slash and kwargs for
         each node on result branch of the category tree
         """
         cat = self
         while cat.is_complex:
-            yield cat.result, cat.argument, cat.slash, cat.hat
+            yield cat.result, cat.argument, cat.slash, self.kwargs
             cat = cat.result
 
     # Backwards compatibility
@@ -247,9 +255,8 @@ class Category(object):
         res_annot = self.result.annotated
         arg_annot = self.argument.annotated
         asterisk = '*' if self.asterisk else ''
-        var2 = ',%s' % VARS[self.var2] if self.var2 >= 0 else ''
         arg_idx = '<%s>' % self.arg_idx if self.arg_idx else ''
-        var_annot = '{%s%s%s}%s' % (VARS[self.var], var2, asterisk, arg_idx)
+        var_annot = '{%s%s}%s' % (VARS[self.var], asterisk, arg_idx)
         hat_annot = '^%s' % self.hat.annotated if self.hat else ''
         annot_cat = '(%s%s%s)%s%s' % (res_annot, self.slash, arg_annot,
                                       var_annot, hat_annot)

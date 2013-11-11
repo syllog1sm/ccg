@@ -268,7 +268,7 @@ class TestTrees(unittest.TestCase):
         assert production.result.has_head(c2_head)
 
     def test_lex_vars_stay(self):
-        ccgbank_loc = '/home/matt/code/repos/data/CCGbank1.2'
+        ccgbank_loc = '/usr/local/data/CCGbank1.2'
         ccgbank = Treebank.CCGbank.CCGbank(path=ccgbank_loc)
         ccg.lexicon.load(os.path.join(ccgbank_loc, 'markedup'))
         asbestos = ccgbank.child(2).child(0)
